@@ -1,0 +1,286 @@
+# Additional analyses were not included in the final draft
+# downstream analysis for each patient (downstream of the original code)
+
+# patients with matched RNAseq data
+bvals_pat <- as.data.frame(bvals)
+bvals_p0506 <- bvals_pat[,c(9,44,37,39)]
+bvals_p2301 <- bvals_pat[,c(22,41,42,23,43,45)]
+bvals_p2302 <- bvals_pat[,c(46,47,48,49)]
+
+mvals_p0506 <- apply(bvals_p0506, 2, function(x) log2(x/(1-x)))
+mvals_p2301 <- apply(bvals_p2301, 2, function(x) log2(x/(1-x)))
+mvals_p2302 <- apply(bvals_p2302, 2, function(x) log2(x/(1-x)))
+
+# bvals patient delta-beta
+bvals_p0506 <- mutate(bvals_p0506, p0506_C1D1 = apply(bvals_p0506[c(1:2)], 1, mean))
+bvals_p0506 <- mutate(bvals_p0506, p0506_C2D8 = apply(bvals_p0506[c(3:4)], 1, mean))
+bvals_p0506 <- mutate(bvals_p0506, p0506_DB = p0506_C2D8 - p0506_C1D1)
+
+bvals_p2301 <- mutate(bvals_p2301, p2301_C1D1 = apply(bvals_p2301[c(1:3)], 1, mean))
+bvals_p2301 <- mutate(bvals_p2301, p2301_C2D8 = apply(bvals_p2301[c(4:6)], 1, mean))
+bvals_p2301 <- mutate(bvals_p2301, p2301_DB = p2301_C2D8 - p2301_C1D1)
+
+bvals_p2302 <- mutate(bvals_p2302, p2302_C1D1 = apply(bvals_p2302[c(1:2)], 1, mean))
+bvals_p2302 <- mutate(bvals_p2302, p2302_C2D8 = apply(bvals_p2302[c(3:4)], 1, mean))
+bvals_p2302 <- mutate(bvals_p2302, p2302_DB = p2302_C2D8 - p2302_C1D1)
+
+# per patient limma 
+# p0506
+treatment_p0506 <- factor(rep(c("C1D1","C2D8"),each = 2))
+design_p0506 <- model.matrix(~treatment_p0506)
+colnames(design_p0506) <- c("C1D1","C2D8")
+treatment.fit_p0506 <- lmFit(mvals_p0506, design_p0506)
+treatment.fit_p0506 <- eBayes(treatment.fit)
+annot450kSub_p0506 <- annot450k[match(rownames(mvals_p0506),annot450k$Name),
+                          c(4,19,24,26)]
+mvals.output_p0506 <- topTable(treatment.fit_p0506, coef=2, 
+                         genelist=annot450kSub, number=nrow(mvals_p0506), 
+                         adjust.method="fdr")
+
+# p2301
+treatment_p2301 <- factor(rep(c("C1D1","C2D8"),each = 3))
+design_p2301 <- model.matrix(~treatment_p2301)
+colnames(design_p2301) <- c("C1D1","C2D8")
+treatment.fit_p2301 <- lmFit(mvals_p2301, design_p2301)
+treatment.fit_p2301 <- eBayes(treatment.fit)
+annot450kSub_p2301 <- annot450k[match(rownames(mvals_p2301),annot450k$Name),
+                                c(4,19,24,26)]
+mvals.output_p2301 <- topTable(treatment.fit_p2301, coef=2, 
+                               genelist=annot450kSub, number=nrow(mvals_p2301), 
+                               adjust.method="fdr")
+
+# p2302
+treatment_p2302 <- factor(rep(c("C1D1","C2D8"),each = 2))
+design_p2302 <- model.matrix(~treatment_p2302)
+colnames(design_p2302) <- c("C1D1","C2D8")
+treatment.fit_p2302 <- lmFit(mvals_p2302, design_p2302)
+treatment.fit_p2302 <- eBayes(treatment.fit)
+annot450kSub_p2302 <- annot450k[match(rownames(mvals_p2302),annot450k$Name),
+                                c(4,19,24,26)]
+mvals.output_p2302 <- topTable(treatment.fit_p2302, coef=2, 
+                               genelist=annot450kSub, number=nrow(mvals_p2302), 
+                               adjust.method="fdr")
+
+bvals_p0506 <- bvals_p0506[which(is.element(rownames(bvals_p0506),mvals.output_p0506$Name)),]
+mvals.output_p0506 <- mvals.output_p0506[which(is.element(mvals.output_p0506$Name,rownames(bvals_p0506))),]
+mvals.output_p0506 <- mvals.output_p0506[order(rownames(mvals.output_p0506), decreasing=F),]
+bvals_p0506 <- bvals_p0506[order(rownames(bvals_p0506), decreasing=F),]
+# mvals.output_p0506$UCSC_RefGene_Name<- sub(";.*","",mvals.output_p0506$UCSC_RefGene_Name, perl=TRUE)
+# mvals.output_p0506$UCSC_RefGene_Group<- sub(";.*","",mvals.output_p0506$UCSC_RefGene_Group, perl=TRUE)
+mvals.output_p0506$C1D1 <- bvals_p0506[, "p0506_C1D1"]
+mvals.output_p0506$C2D8 <- bvals_p0506[, "p0506_C2D8"]
+mvals.output_p0506$delta_beta <- bvals_p0506[, "p0506_DB"]
+
+bvals_p2301 <- bvals_p2301[which(is.element(rownames(bvals_p2301),mvals.output_p2301$Name)),]
+mvals.output_p2301 <- mvals.output_p2301[which(is.element(mvals.output_p2301$Name,rownames(bvals_p2301))),]
+mvals.output_p2301 <- mvals.output_p2301[order(rownames(mvals.output_p2301), decreasing=F),]
+bvals_p2301 <- bvals_p2301[order(rownames(bvals_p2301), decreasing=F),]
+# mvals.output_p2301$UCSC_RefGene_Name<- sub(";.*","",mvals.output_p2301$UCSC_RefGene_Name, perl=TRUE)
+# mvals.output_p2301$UCSC_RefGene_Group<- sub(";.*","",mvals.output_p2301$UCSC_RefGene_Group, perl=TRUE)
+mvals.output_p2301$C1D1 <- bvals_p2301[, "p2301_C1D1"]
+mvals.output_p2301$C2D8 <- bvals_p2301[, "p2301_C2D8"]
+mvals.output_p2301$delta_beta <- bvals_p2301[, "p2301_DB"]
+
+bvals_p2302 <- bvals_p2302[which(is.element(rownames(bvals_p2302),mvals.output_p2302$Name)),]
+mvals.output_p2302 <- mvals.output_p2302[which(is.element(mvals.output_p2302$Name,rownames(bvals_p2302))),]
+mvals.output_p2302 <- mvals.output[order(rownames(mvals.output_p2302), decreasing=F),]
+bvals_p2302 <- bvals_p2302[order(rownames(bvals_p2302), decreasing=F),]
+# mvals.output_p2302$UCSC_RefGene_Name<- sub(";.*","",mvals.output_p2302$UCSC_RefGene_Name, perl=TRUE)
+# mvals.output_p2302$UCSC_RefGene_Group<- sub(";.*","",mvals.output_p2302$UCSC_RefGene_Group, perl=TRUE)
+mvals.output_p2302$C1D1 <- bvals_p2302[, "p2302_C1D1"]
+mvals.output_p2302$C2D8 <- bvals_p2302[, "p2302_C2D8"]
+mvals.output_p2302$delta_beta <- bvals_p2302[, "p2302_DB"]
+
+mvals.output_p0506 <- mvals.output_p0506[!mvals.output_p0506$UCSC_RefGene_Name == "",]
+mvals.output_p0506 <- mvals.output_p0506[!is.na(mvals.output_p0506$UCSC_RefGene_Name),]
+mvals.output_p2301 <- mvals.output_p2301[!mvals.output_p2301$UCSC_RefGene_Name == "",]
+mvals.output_p2301 <- mvals.output_p2301[!is.na(mvals.output_p2301$UCSC_RefGene_Name),]
+mvals.output_p2302 <- mvals.output_p2302[!mvals.output_p2302$UCSC_RefGene_Name == "",]
+mvals.output_p2302 <- mvals.output_p2302[!is.na(mvals.output_p2302$UCSC_RefGene_Name),]
+
+mvals.output_p0506 <- mvals.output_p0506[,c(3,13,8,1,4,2)]
+mvals.output_p2301 <- mvals.output_p2301[,c(3,13,8,1,4,2)]
+mvals.output_p2302 <- mvals.output_p2302[,c(3,13,8,1,4,2)]
+
+
+# merged DNA methylation and RNA sequencing for each invidual patient with matched datasets
+write.csv(mvals.output_p0506, file = "mvals.output_p0506.csv")
+write.csv(mvals.output_p2301, file = "mvals.output_p2301.csv")
+write.csv(mvals.output_p2302, file = "mvals.output_p2302.csv")
+
+write.csv(mvals.output_p0506, file = "dds.p0506.csv")
+write.csv(mvals.output_p0506, file = "dds.p2301.csv")
+write.csv(mvals.output_p0506, file = "dds.p2302.csv")
+
+# Individual data integration was executed in Microsoft Excel
+# =IFERROR(INDEX($X:$X,MATCH(Y,$Z:$Z,0)),"")
+# where ‘$X:$X’ represents the gene list from RNA-seq analysis, ‘Y’ represents the specific gene, and $Z:$Z’ represents the specific value
+
+# Created new .CSV file for this
+# mvals.output_p0506.csv
+# mvals.output_p2301.csv
+# mvals.output_p2302.csv
+
+
+#
+p0506 <-read.csv("mvals.output_p0506.csv", as.is=T)
+p0506$stat <- NA
+p0506$stat[p0506$RNA_log2FoldChange >= 1 & p0506$delta_beta >= 0.15] <- "delta-beta > 15% + Log2FC > ± 1"
+p0506$stat[p0506$RNA_log2FoldChange >= 1 & p0506$delta_beta <= -0.15]<- "delta-beta > 15% + Log2FC > ± 1"
+p0506$stat[p0506$RNA_log2FoldChange <= -1 & p0506$delta_beta >= 0.15] <- "delta-beta > 15% + Log2FC > ± 1"
+p0506$stat[p0506$RNA_log2FoldChange <= -1 & p0506$delta_beta <= -0.15]<- "delta-beta > 15% + Log2FC > ± 1"
+p0506$stat[p0506$RNA_log2FoldChange >= -1 & p0506$RNA_log2FoldChange <= 1] <- "Not Changed"
+p0506$stat[is.na(p0506$stat)] <- "delta-beta < 15% + Log2FC > ± 1"
+p0506$stat[p0506$stat == "Not Changed" & p0506$delta_beta >= 0.15] <- "delta-beta > 15% + Log2FC < ± 1"
+p0506$stat[p0506$stat == "Not Changed" & p0506$delta_beta <= -0.15] <- "delta-beta > 15% + Log2FC < ± 1"
+
+p0506_2 <- p0506[p0506$stat == "delta-beta > 15% + Log2FC > ± 1",]
+
+p0506_2_sig <- as.data.frame(unique(as.character(p0506_2$UCSC_RefGene_Name)))
+
+p0506.plot <- ggplot(p0506, aes(x=delta_beta, y=RNA_log2FoldChange)) +
+  facet_wrap(~ UCSC_RefGene_Group, scales = "free_y") +
+  geom_point(aes(colour=factor(stat))) +
+  scale_colour_manual(values=c("black", "blue", "green","red"))+
+  scale_y_continuous(name = "Log2FC (Expression)")+
+  scale_x_continuous(name = "Delta-Beta (Methylation)")+
+  geom_hline(yintercept = 1, linetype="dashed", size=1, color="gray30")+
+  geom_hline(yintercept = -1, linetype="dashed", size=1, color="gray30")+
+  geom_vline(xintercept = -0.15, linetype="dashed", size=1, color="gray30")+
+  geom_vline(xintercept = 0.15, linetype="dashed", size=1, color="gray30")+
+  labs(title = "p0506")+
+  theme_bw() %+replace%
+  theme(axis.text.x = element_text(angle=0, hjust = 1, size = 12),
+        axis.text.y = element_text(angle=0, hjust = 0.5, size = 12),
+        axis.ticks.x=element_blank(),
+        axis.title.x = element_text(face="bold", vjust = -1, angle=0, size=12),
+        axis.title.y = element_text(face="bold", vjust = 2, angle=90, size=12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.title=element_blank(),
+        legend.position= "bottom",
+        legend.key = element_rect(fill = "white", 0.1))
+p0506.plot
+
+#
+p2301 <-read.csv("mvals.output_p2301.csv", as.is=T)
+p2301$stat <- NA
+p2301$stat[p2301$RNA_log2FoldChange >= 1 & p2301$delta_beta >= 0.15] <- "delta-beta > 15% + Log2FC > ± 1"
+p2301$stat[p2301$RNA_log2FoldChange >= 1 & p2301$delta_beta <= -0.15]<- "delta-beta > 15% + Log2FC > ± 1"
+p2301$stat[p2301$RNA_log2FoldChange <= -1 & p2301$delta_beta >= 0.15] <- "delta-beta > 15% + Log2FC > ± 1"
+p2301$stat[p2301$RNA_log2FoldChange <= -1 & p2301$delta_beta <= -0.15]<- "delta-beta > 15% + Log2FC > ± 1"
+p2301$stat[p2301$RNA_log2FoldChange >= -1 & p2301$RNA_log2FoldChange <= 1] <- "Not Changed"
+p2301$stat[is.na(p2301$stat)] <- "delta-beta < 15% + Log2FC > ± 1"
+p2301$stat[p2301$stat == "Not Changed" & p2301$delta_beta >= 0.15] <- "delta-beta > 15% + Log2FC < ± 1"
+p2301$stat[p2301$stat == "Not Changed" & p2301$delta_beta <= -0.15] <- "delta-beta > 15% + Log2FC < ± 1"
+
+p2301_2 <- p2301[p2301$stat == "delta-beta > 15% + Log2FC > ± 1",]
+
+p2301_2_sig <- as.data.frame(unique(as.character(p2301_2$UCSC_RefGene_Name)))
+
+p2301.plot <- ggplot(p2301, aes(x=delta_beta, y=RNA_log2FoldChange)) +
+  facet_wrap(~ UCSC_RefGene_Group, scales = "free_y") +
+  geom_point(aes(colour=factor(stat))) +
+  scale_colour_manual(values=c("black", "blue", "green","red"))+
+  scale_y_continuous(name = "Log2FC (Expression)")+
+  scale_x_continuous(name = "Delta-Beta (Methylation)")+
+  geom_hline(yintercept = 1, linetype="dashed", size=1, color="gray30")+
+  geom_hline(yintercept = -1, linetype="dashed", size=1, color="gray30")+
+  geom_vline(xintercept = -0.15, linetype="dashed", size=1, color="gray30")+
+  geom_vline(xintercept = 0.15, linetype="dashed", size=1, color="gray30")+
+  labs(title = "p2301")+
+  theme_bw() %+replace%
+  theme(axis.text.x = element_text(angle=0, hjust = 1, size = 12),
+        axis.text.y = element_text(angle=0, hjust = 0.5, size = 12),
+        axis.ticks.x=element_blank(),
+        axis.title.x = element_text(face="bold", vjust = -1, angle=0, size=12),
+        axis.title.y = element_text(face="bold", vjust = 2, angle=90, size=12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.title=element_blank(),
+        legend.position= "bottom",
+        legend.key = element_rect(fill = "white", 0.1))
+p2301.plot
+
+#
+p2302 <-read.csv("mvals.output_p2302.csv", as.is=T)
+p2302$stat <- NA
+p2302$stat[p2302$RNA_log2FoldChange >= 1 & p2302$delta_beta >= 0.15] <- "delta-beta > 15% + Log2FC > ± 1"
+p2302$stat[p2302$RNA_log2FoldChange >= 1 & p2302$delta_beta <= -0.15]<- "delta-beta > 15% + Log2FC > ± 1"
+p2302$stat[p2302$RNA_log2FoldChange <= -1 & p2302$delta_beta >= 0.15] <- "delta-beta > 15% + Log2FC > ± 1"
+p2302$stat[p2302$RNA_log2FoldChange <= -1 & p2302$delta_beta <= -0.15]<- "delta-beta > 15% + Log2FC > ± 1"
+p2302$stat[p2302$RNA_log2FoldChange >= -1 & p2302$RNA_log2FoldChange <= 1] <- "Not Changed"
+p2302$stat[is.na(p2302$stat)] <- "delta-beta < 15% + Log2FC > ± 1"
+p2302$stat[p2302$stat == "Not Changed" & p2302$delta_beta >= 0.15] <- "delta-beta > 15% + Log2FC < ± 1"
+p2302$stat[p2302$stat == "Not Changed" & p2302$delta_beta <= -0.15] <- "delta-beta > 15% + Log2FC < ± 1"
+
+p2302_2 <- p2302[p2302$stat == "delta-beta > 15% + Log2FC > ± 1",]
+
+p2302_2_sig <- as.data.frame(unique(as.character(p2302_2$UCSC_RefGene_Name)))
+
+p2302.plot <- ggplot(p2302, aes(x=delta_beta, y=RNA_log2FoldChange)) +
+  facet_wrap(~ UCSC_RefGene_Group, scales = "free_y") +
+  geom_point(aes(colour=factor(stat))) +
+  scale_colour_manual(values=c("black", "blue", "green","red"))+
+  scale_y_continuous(name = "Log2FC (Expression)")+
+  scale_x_continuous(name = "Delta-Beta (Methylation)")+
+  geom_hline(yintercept = 1, linetype="dashed", size=1, color="gray30")+
+  geom_hline(yintercept = -1, linetype="dashed", size=1, color="gray30")+
+  geom_vline(xintercept = -0.15, linetype="dashed", size=1, color="gray30")+
+  geom_vline(xintercept = 0.15, linetype="dashed", size=1, color="gray30")+
+  labs(title = "p2302")+
+  theme_bw() %+replace%
+  theme(axis.text.x = element_text(angle=0, hjust = 1, size = 12),
+        axis.text.y = element_text(angle=0, hjust = 0.5, size = 12),
+        axis.ticks.x=element_blank(),
+        axis.title.x = element_text(face="bold", vjust = -1, angle=0, size=12),
+        axis.title.y = element_text(face="bold", vjust = 2, angle=90, size=12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.title=element_blank(),
+        legend.position= "bottom",
+        legend.key = element_rect(fill = "white", 0.1))
+p2302.plot
+
+# stat log2FC > 1 and DB ±15%
+# p0506
+p0506_prom <- p0506_2[p0506_2$UCSC_RefGene_Group == "TSS1500" |
+                        p0506_2$UCSC_RefGene_Group == "TSS200",]
+length(unique(p0506_prom$UCSC_RefGene_Name)) # 192
+p0506_5UTR <- p0506_2[p0506_2$UCSC_RefGene_Group == "5'UTR",]
+length(unique(p0506_5UTR$UCSC_RefGene_Name)) # 62
+p0506_body <- p0506_2[p0506_2$UCSC_RefGene_Group == "Body",]
+length(unique(p0506_body$UCSC_RefGene_Name)) # 140
+p0506_3UTR <- p0506_2[p0506_2$UCSC_RefGene_Group == "3'UTR",]
+length(unique(p0506_3UTR$UCSC_RefGene_Name)) # 53
+p0506_exon <- p0506_2[p0506_2$UCSC_RefGene_Group == "1stExon",]
+length(unique(p0506_exon$UCSC_RefGene_Name)) # 66
+
+# p2301
+p2301_prom <- p2301_2[p2301_2$UCSC_RefGene_Group == "TSS1500" |
+                        p2301_2$UCSC_RefGene_Group == "TSS200",]
+length(unique(p2301_prom$UCSC_RefGene_Name)) # 163
+p2301_5UTR <- p2301_2[p2301_2$UCSC_RefGene_Group == "5'UTR",]
+length(unique(p2301_5UTR$UCSC_RefGene_Name)) # 55
+p2301_body <- p2301_2[p2301_2$UCSC_RefGene_Group == "Body",]
+length(unique(p2301_body$UCSC_RefGene_Name)) # 123
+p2301_3UTR <- p2301_2[p2301_2$UCSC_RefGene_Group == "3'UTR",]
+length(unique(p2301_3UTR$UCSC_RefGene_Name)) # 35
+p2301_exon <- p2301_2[p2301_2$UCSC_RefGene_Group == "1stExon",]
+length(unique(p2301_exon$UCSC_RefGene_Name)) # 44
+
+# p2302
+p2302_prom <- p2302_2[p2302_2$UCSC_RefGene_Group == "TSS1500" |
+                        p2302_2$UCSC_RefGene_Group == "TSS200",]
+length(unique(p2302_prom$UCSC_RefGene_Name)) # 139
+p2302_5UTR <- p2302_2[p2302_2$UCSC_RefGene_Group == "5'UTR",]
+length(unique(p2302_5UTR$UCSC_RefGene_Name)) # 47
+p2302_body <- p2302_2[p2302_2$UCSC_RefGene_Group == "Body",]
+length(unique(p2302_body$UCSC_RefGene_Name)) # 117
+p2302_3UTR <- p2302_2[p2302_2$UCSC_RefGene_Group == "3'UTR",]
+length(unique(p2302_3UTR$UCSC_RefGene_Name)) # 35
+p2302_exon <- p2302_2[p2302_2$UCSC_RefGene_Group == "1stExon",]
+length(unique(p2302_exon$UCSC_RefGene_Name)) # 37
