@@ -1,0 +1,897 @@
+library(limma)
+library(minfi)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+library(IlluminaHumanMethylation450kmanifest)
+library(RColorBrewer)
+library(missMethyl)
+library(Gviz)
+library(DMRcate)
+library(stringr)
+library(ggplot2)
+library(gplots)
+library(ggrepel)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(pathfindR)
+library(biomaRt)
+library(EnhancedVolcano)
+library(ggpubr)
+library(Rsubread)
+library(DESeq2)
+
+# DNA methylation Analysis
+
+dataDirectory <- "./data"
+annot450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+targets <- read.metharray.sheet(dataDirectory, pattern="SampleSheet.csv")
+rgset <- read.metharray.exp(targets=targets)
+sampleNames(rgset) <- targets$GEO
+
+# QC
+detP <- detectionP(rgset)
+detP.raw <- detP
+keep <- colMeans(detP) < 0.01
+rgset <- rgset[,keep]
+targets <- targets[keep,]
+detP <- detP[,keep]
+
+par(mfrow=c(1,2))
+png("detection_P.png", width = 10, height = 12, units = "in", res=300)
+pal <- brewer.pal(8,"Dark2")
+barplot(colMeans(detP.raw), col=pal[factor(targets$Treatment)], las=3,
+        cex.names=0.8,ylim = c(0,0.02),space = 0.3, ylab = "Mean detection p-value")
+abline(h=0.01,col="red")
+legend("topleft", legend=levels(factor(targets$Treatment)), fill=pal,
+       bg="white", cex = 1,bty = "n")
+barplot(colMeans(detP), col=pal[factor(targets$Treatment)], las=3,
+        cex.names=0.8,ylim = c(0,0.02),space = 0.3, ylab = "Mean detection p-value")
+abline(h=0.01,col="red")
+legend("topleft", legend=levels(factor(targets$Treatment)), fill=pal,
+       bg="white", cex = 1,bty = "n")
+dev.off()
+
+qcReport(rgset, sampGroups=targets$Treatment,pdf="qcReport.pdf")
+
+
+# Removed samples that failed QC.
+# GSM2724345 - p0309_C2D8 & GSM2724347 - p0508_C1D1
+
+# normalisation
+# MSet.raw <- preprocessRaw(rgset)
+MSet.bgnorm <- preprocessIllumina(rgset, bg.correct=TRUE, normalize="no")
+MSet.qnorm <- preprocessSWAN(rgset, MSet.bgnorm)
+
+par(mfrow=c(1,2))
+png("density_raw.png", width = 10, height = 12, units = "in", res=300)
+densityPlot(rgset, sampGroups=targets$Treatment,main="Raw", legend=FALSE)
+legend("top", legend = levels(factor(targets$Treatment)),
+       text.col=brewer.pal(8,"Dark2"), cex = 0.75)
+dev.off()
+png("density_norm.png", width = 10, height = 12, units = "in", res=300)
+densityPlot(getBeta(MSet.qnorm), sampGroups=targets$Treatment,
+            main="Normalised", legend=FALSE)
+legend("top", legend = levels(factor(targets$Treatment)),
+       text.col=brewer.pal(8,"Dark2"), cex = 1)
+dev.off()
+
+# Preliminary MDS Plot
+png("MDS.png", width = 10, height = 12, units = "in", res=300)
+par(mfrow=c(1,1))
+plotMDS(getM(MSet.qnorm), top=1000, gene.selection="common", pch = 1,
+        col=pal[factor(targets$Treatment)])
+legend("top", legend=levels(factor(targets$Treatment)), text.col=pal,
+       bg="white", cex=0.7)
+dev.off()
+
+# filter probes
+detP <- detP[match(featureNames(MSet.qnorm),rownames(detP)),]
+keep <- rowSums(detP < 0.01) == ncol(MSet.qnorm)
+MSet.filt <- MSet.qnorm[keep,]
+
+# remove reactive probes (Chen et al, 2013)
+rmReactivePrbs <- read.csv("48639-non-specific-probes-Illumina450k.csv",sep="/", stringsAsFactors=FALSE)
+keep <- !(featureNames(MSet.filt) %in% rmReactivePrbs[targets$Treatment,])
+MSet.filt <- MSet.filt[keep,]
+
+bvals <- getBeta(MSet.filt)
+bvals.sub <- as.data.frame(bvals)
+
+# See Sample_details.xlsx for column numbers
+# pre-guadecitabine (C1D1)
+bvals.sub <- mutate(bvals.sub, p0201_C1D1 = apply(bvals.sub[c(12,14,29,31)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0302_C1D1 = apply(bvals.sub[c(13,15,28,30)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0309_C1D1 = apply(bvals.sub[c(1,2,36,38)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0501_C1D1 = apply(bvals.sub[c(20,32,33)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0506_C1D1 = apply(bvals.sub[c(9,44)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0702_C1D1 = apply(bvals.sub[c(4,6,7,34,35)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0802_C1D1 = apply(bvals.sub[c(26,27)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0903_C1D1 = apply(bvals.sub[c(53,55)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p1301_C1D1 = apply(bvals.sub[c(24)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p1603_C1D1 = apply(bvals.sub[c(50,51)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p2301_C1D1 = apply(bvals.sub[c(22,41,42)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p2302_C1D1 = apply(bvals.sub[c(46,47)], 1, mean))
+
+# post-guadecitabine-guadecitabine (C1D1)
+bvals.sub <- mutate(bvals.sub, p0201_C2D8 = apply(bvals.sub[c(16,18)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0302_C2D8 = apply(bvals.sub[c(17,19)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0309_C2D8 = apply(bvals.sub[c(3,5,40)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0501_C2D8 = apply(bvals.sub[c(21)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0506_C2D8 = apply(bvals.sub[c(37,39)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0702_C2D8 = apply(bvals.sub[c(8,10)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0802_C2D8 = apply(bvals.sub[c(11)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p0903_C2D8 = apply(bvals.sub[c(56,57)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p1301_C2D8 = apply(bvals.sub[c(25)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p1603_C2D8 = apply(bvals.sub[c(52,54)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p2301_C2D8 = apply(bvals.sub[c(23,43,45)], 1, mean))
+bvals.sub <- mutate(bvals.sub, p2302_C2D8 = apply(bvals.sub[c(48,49)], 1, mean))
+
+bvals.sub <- bvals.sub[,-c(1:57)]
+
+# pre-guadecitabine vs post-guadecitabine scatter plot
+bvals.sp <- as.data.frame(bvals.sub)
+sp1 <- ggplot(bvals.sp, aes(x=bvals.sp[,1], y=bvals.sp[,13])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red")+ ggtitle("Patient: p0201") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp2 <- ggplot(bvals.sp, aes(x=bvals.sp[,2], y=bvals.sp[,14])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red")+ggtitle("Patient: p0302") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp3 <- ggplot(bvals.sp, aes(x=bvals.sp[,3], y=bvals.sp[,15])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p0309") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp4 <- ggplot(bvals.sp, aes(x=bvals.sp[,4], y=bvals.sp[,16])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p0501") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp5 <- ggplot(bvals.sp, aes(x=bvals.sp[,5], y=bvals.sp[,17])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p0506") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp6 <- ggplot(bvals.sp, aes(x=bvals.sp[,6], y=bvals.sp[,18])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p0702") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp7 <- ggplot(bvals.sp, aes(x=bvals.sp[,7], y=bvals.sp[,19])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p0802") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp8 <- ggplot(bvals.sp, aes(x=bvals.sp[,8], y=bvals.sp[,20])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p0903") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp9 <- ggplot(bvals.sp, aes(x=bvals.sp[,9], y=bvals.sp[,21])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p1301") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp10 <- ggplot(bvals.sp, aes(x=bvals.sp[,10], y=bvals.sp[,22])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p1603")+
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp11 <- ggplot(bvals.sp, aes(x=bvals.sp[,11], y=bvals.sp[,23])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p2301") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+sp12 <- ggplot(bvals.sp, aes(x=bvals.sp[,12], y=bvals.sp[,24])) + geom_point() +
+  geom_abline(intercept = c(-0.15, 0.15), col="red") + ggtitle("Patient: p2302") +
+  xlab("Pre-Guadecitabine (β-values)") + ylab("Post-Guadecitabine (β-values)")
+
+png("scatterplot5.png", width = 12, height = 10, units = "in", res = 300)
+ggarrange(sp1,sp2,sp3,sp4,sp5,sp6,sp7,sp8,sp9,sp10,sp11,sp12, widths = c(2,2))
+dev.off()
+
+# exclude patients with low pharmacodynamic response to guadecitabine
+patients.bvals <- as.data.frame(bvals.sub)
+patients.bvals <- mutate(patients.bvals, p0201_delta_beta = p0201_C2D8 - p0201_C1D1)
+patients.bvals <- mutate(patients.bvals, p0302_delta_beta = p0302_C2D8 - p0302_C1D1)
+patients.bvals <- mutate(patients.bvals, p0309_delta_beta = p0309_C2D8 - p0309_C1D1)
+patients.bvals <- mutate(patients.bvals, p0501_delta_beta = p0501_C2D8 - p0501_C1D1)
+patients.bvals <- mutate(patients.bvals, p0506_delta_beta = p0506_C2D8 - p0506_C1D1)
+patients.bvals <- mutate(patients.bvals, p0702_delta_beta = p0702_C2D8 - p0702_C1D1)
+patients.bvals <- mutate(patients.bvals, p0802_delta_beta = p0802_C2D8 - p0802_C1D1)
+patients.bvals <- mutate(patients.bvals, p0903_delta_beta = p0903_C2D8 - p0903_C1D1)
+patients.bvals <- mutate(patients.bvals, p1301_delta_beta = p1301_C2D8 - p1301_C1D1)
+patients.bvals <- mutate(patients.bvals, p1603_delta_beta = p1603_C2D8 - p1603_C1D1)
+patients.bvals <- mutate(patients.bvals, p2301_delta_beta = p2301_C2D8 - p2301_C1D1)
+patients.bvals <- mutate(patients.bvals, p2302_delta_beta = p2302_C2D8 - p2302_C1D1)
+patients.bvals <- patients.bvals[,-c(1:24)]
+
+patients <- data.frame(rep(NA, 12))
+rownames(patients) <- c("p0201","p0302","p0309","p0501","p0506","p0702",
+                        "p0802","p0903","p1301","p1603","p2301","p2302")
+patients$demeth_percentage <- c((length(which(patients.bvals$p0201_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0302_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0309_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0501_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0506_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0702_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0802_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0903_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p1301_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p1603_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p2301_delta_beta <= -0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p2302_delta_beta <= -0.15))/nrow(bvals.sub))*100)
+
+patients$meth_percentage   <- c((length(which(patients.bvals$p0201_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0302_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0309_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0501_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0506_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0702_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0802_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p0903_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p1301_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p1603_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p2301_delta_beta >= 0.15))/nrow(bvals.sub))*100,
+                                (length(which(patients.bvals$p2302_delta_beta >= 0.15))/nrow(bvals.sub))*100)
+patients <- patients[,-1]
+
+# excluded p0309, p0903 and p1603
+# appeared to have low pharmacodynamic response to guadecitabine
+bvals.included <- bvals.sub[,-c(3,8,10,15,20,22)]
+
+# take median of beta-value of each CpG site per treatment
+# delta-beta of median
+bvals.mid <- as.data.frame(bvals.included)
+bvals.mid <- mutate(bvals.mid, 
+                    median_C1D1 = apply(bvals.mid[,c(1:9)], 1, median))
+bvals.mid <- mutate(bvals.mid, 
+                    median_C2D8 = apply(bvals.mid[,c(10:18)], 1, median))
+bvals.mid <- mutate(bvals.mid, delta_beta = median_C2D8 - median_C1D1)
+
+# M-values calculation base on averaged beta-value
+mvals <- apply(bvals.included, 2, function(x) log2(x/(1-x)))
+
+# Preliminary heatmaps
+# Global
+mvals_hm_global <- mvals
+global.euclidmat <- as.matrix(dist(t(mvals_hm_global)))
+global.pcormat <- cor(mvals_hm_global,method="pearson",use="complete")
+global.scormat <- cor(mvals_hm_global,method="spearman",use="complete")
+treatment.cols <- rep(c("blue","red"),each = 9)
+
+png("heatmap_spearman.png", width = 10, height = 15, units = "in", res = 300)
+heatmap(global.scormat,col=bluered(100),ColSideColors=treatment.cols, cex.axis =10, bg="white")
+dev.off()
+png("heatmap_pearson.png", width = 10, height = 15, units = "in", res = 300)
+heatmap(global.pcormat,col=bluered(100),ColSideColors=treatment.cols)
+dev.off()
+png("heatmap_euclidean.png", width = 10, height = 15, units = "in", res = 300)
+heatmap(global.euclidmat,col=bluered(100),ColSideColors=treatment.cols)
+dev.off()
+
+# Preliminary MDS post-filtering
+# Global
+MDSfit_global <- cmdscale(global.euclidmat,eig=TRUE,k=2)
+MDScols <- rep("blue", 18)
+MDScols[10:18] <- "red"
+png("MDS_pcas.png", width = 10, height = 12, units = "in", res=300)
+plot(x=MDSfit_global$points[,1],y=MDSfit_global$points[,2],
+     xlab = "Principal Component 1", ylab = "Principal Component 2",
+     xlim = c(-700,1500))
+text(x=MDSfit_global$points[,1],y=MDSfit_global$points[,2],
+     labels=colnames(global.euclidmat),col=MDScols,cex=1.5)
+legend("topright", legend = c("Pre-Guadecitabine", "Post-Guadecitabine"),
+       fill = c("blue","red"))
+dev.off()
+
+# limma
+# differential methylation analysis
+treatment <- factor(rep(c("C1D1","C2D8"),each = 9))
+design <- model.matrix(~treatment)
+colnames(design) <- c("C1D1","C2D8")
+treatment.fit <- lmFit(mvals, design)
+treatment.fit <- eBayes(treatment.fit)
+annot450kSub <- annot450k[match(rownames(mvals),annot450k$Name),
+                          c(4,19,24,26)]
+mvals.output <- topTable(treatment.fit, coef=2, 
+                         genelist=annot450kSub, number=nrow(mvals), 
+                         adjust.method="fdr")
+
+# topTable and beta-value integration
+bvals2 <- bvals.mid[which(is.element(rownames(bvals.mid),mvals.output$Name)),]
+mvals.output <-mvals.output[which(is.element(mvals.output$Name,rownames(bvals2))),]
+mvals.output <- mvals.output[order(rownames(mvals.output), decreasing=F),]
+bvals2 <- bvals2[order(rownames(bvals2), decreasing=F),]
+
+mvals.output$C1D1 <- bvals2[, "median_C1D1"]
+mvals.output$C2D8 <- bvals2[, "median_C2D8"]
+mvals.output$delta_beta <- bvals2[, "delta_beta"]
+bvals2 <- bvals2[,-c(19:21)]
+
+# Samples from patients with matched methylome and transcriptome data
+mvals.output_all <- mvals.output[,c(3,13,8,1,4,2)]
+mvals.output_all$UCSC_RefGene_Name<- sub(";.*","",mvals.output_all$UCSC_RefGene_Name, perl=TRUE)
+mvals.output_all$UCSC_RefGene_Group<- sub(";.*","",mvals.output_all$UCSC_RefGene_Group, perl=TRUE)
+
+# Check CpG sites
+png("cpg_sites_test", width = 10, height = 12, units = "in", res=300)
+par(mfrow=c(2,2))
+sapply(rownames(mvals.output)[1:4], function(cpg){
+  plotCpg(bvals2, cpg=cpg, pheno=rep(c("C1D1","C2D8"),each=9), ylab = "β-values")
+})
+dev.off()
+
+# Differentially Expressed Probes (DMPs; p < 0.05)
+DMP <- mvals.output
+DMP <- DMP[DMP$P.Value < 0.05,]
+DMP <- DMP[!DMP$UCSC_RefGene_Name == "",]
+
+# DMP Statistics
+dim(DMP)
+unique(DMP$Relation_to_Island)
+unique(DMP$UCSC_RefGene_Group)
+
+# Pie plot for DMPs
+rel2island <- c(length(which(DMP$Relation_to_Island == "N_Shore")),
+                length(which(DMP$Relation_to_Island == "S_Shore")),
+                length(which(DMP$Relation_to_Island == "OpenSea")),
+                length(which(DMP$Relation_to_Island == "Island")),
+                length(which(DMP$Relation_to_Island == "S_Shelf")),
+                length(which(DMP$Relation_to_Island == "N_Shelf")))
+
+gene_group <- c(length(which(DMP$UCSC_RefGene_Group == "TSS1500")),
+                length(which(DMP$UCSC_RefGene_Group == "TSS200")),
+                length(which(DMP$UCSC_RefGene_Group == "Body")),
+                length(which(DMP$UCSC_RefGene_Group == "3'UTR")),
+                length(which(DMP$UCSC_RefGene_Group == "5'UTR")),
+                length(which(DMP$UCSC_RefGene_Group == "1stExon")),
+                length(which(DMP$UCSC_RefGene_Group == "")))
+
+labs_generel <- c("North Shore","South Shore","Open Sea", "Island","South Shelf", "North Shelf")
+pct_gene_rel <- round(rel2island/sum(rel2island)*100)
+lbls_generel <- paste("(",pct_gene_rel,"%)", sep ="")
+lbls_generel <- paste(labs_generel, lbls_generel)
+
+labs_genegrp <- c("TSS1500","TSS200","Body", "3'UTR","5'UTR", "1st Exon", "Not linked to gene")
+pct_gene_grp <- round(gene_group/sum(gene_group)*100)
+lbls_genegrp <- paste("(",pct_gene_grp,"%)", sep ="")
+lbls_genegrp <- paste(labs_genegrp, lbls_genegrp)
+
+pie.cols <- brewer.pal(7, "Dark2")
+png("pie_chart.png", width = 12, height = 6, units = "in", res=300)
+par(mfrow=c(1,2),mai = c(0,1.2,0,1.2))
+pie(gene_group, label= lbls_genegrp, border = "black", col = pie.cols)
+pie(rel2island, labels = lbls_generel, border = "black", col = pie.cols)
+dev.off()
+
+# DNA methylation heatmap using DMPs
+DMP_hm <- DMP[which(is.element(rownames(DMP),rownames(mvals))),]
+mvals_DMP_hm <- mvals[which(is.element(rownames(mvals),rownames(DMP_hm))),]
+mvals_DMP_hm <- mvals_DMP_hm[order(rownames(mvals_DMP_hm), decreasing=F),]
+DMP_hm <- DMP_hm[order(rownames(DMP_hm), decreasing=F),]
+
+DMP_euclidmat <- as.matrix(dist(t(mvals_DMP_hm)))
+DMP_pcormat <- cor(mvals_DMP_hm,method="pearson",use="complete")
+DMP_scormat <- cor(mvals_DMP_hm,method="spearman",use="complete")
+treatment.cols <- rep(c("blue","red"),each = 9)
+
+# DMP Heatmap: Pearson
+png("heatmap_DMP_pearson.png", width = 10, height = 15, units = "in", res = 300)
+heatmap(DMP_pcormat,col=bluered(100),ColSideColors=treatment.cols, margins = c(7,5))
+dev.off()
+
+# DMP Heatmap: Spearman
+png("heatmap_DMP_spearman.png", width = 10, height = 15, units = "in", res = 300)
+heatmap(DMP_scormat,col=bluered(100),ColSideColors=treatment.cols, margins = c(7,5))
+dev.off()
+
+# DMP heatmap with hierarchical clustering 
+DMP_hclust <- hclust(as.dist(1-cor(t(mvals_DMP_hm))))
+png("DMP_heatmap_3.png", width = 10, height = 12, units = "in", res = 300)
+heatmap(mvals_DMP_hm, Rowv = as.dendrogram(DMP_hclust), col = greenred(100),
+        ColSideColors=treatment.cols,labRow = "", margins = c(10,10), cexCol = 2)
+dev.off()
+
+
+# MDS using DMPs
+DMP_MDSfit <- cmdscale(DMP_euclidmat,eig=TRUE,k=2)
+MDScols <- rep("#4B9B79", 18)
+MDScols[10:18] <- "#CA6727"
+png("MDS_pcas_2.png", width = 10, height = 12, units = "in", res=300)
+plot(x=DMP_MDSfit$points[,1],y=DMP_MDSfit$points[,2],
+     xlab = "Principal Component 1", ylab = "Principal Component 2",
+     col=MDScols,cex=3,pch=16, cex.lab = 3, cex.lab = 2, margins = c(10,10), cexCol = 2)
+legend("topleft", legend = c("C1D1", "C2D8"),
+       fill = c("#4B9B79","#CA6727"),bg="white", cex = 3, bty = "n")
+dev.off()
+
+# DMP stats
+DMP.stat <- DMP[!DMP$UCSC_RefGene_Name == "",]
+DMP.stat <- DMP.stat[!is.na(DMP.stat$UCSC_RefGene_Name),]
+length(unique(DMP.stat$UCSC_RefGene_Name)) # Linked to 5652 genes
+DMP.stat.2 <- DMP.stat[DMP.stat$delta_beta >= 0.15 | DMP.stat$delta_beta <= -0.15,]
+length(unique(DMP.stat.2$UCSC_RefGene_Name)) # linked to 349 significantly altered genes
+DMP.stat.db_hi <- DMP.stat.2[DMP.stat.2$delta_beta >= 0.15,]
+DMP.stat.db_lo <- DMP.stat.2[DMP.stat.2$delta_beta <= -0.15,]
+length(unique(DMP.stat.db_hi$UCSC_RefGene_Name)) #  369
+length(unique(DMP.stat.db_lo$UCSC_RefGene_Name)) # 59
+
+# DMP GSEA
+DMP_gsea_path <- run_pathfindR(DMP, pin_name_path = "STRING", gene_sets = "KEGG",adj_method = "fdr")
+enrichment_chart(result_df = DMP_gsea_path, top_terms = 100)
+clustered_DMP_path <- cluster_enriched_terms(DMP_gsea_path, plot_dend = FALSE, plot_clusters_graph = TRUE)
+knitr::kable(clustered_DMP_path[RA_clustered$clustered_path == "Representative", ])
+clust.selected <- subset(clustered_DMP_path, Cluster %in% c(1,3))
+enrichment_chart(clustered_DMP_path, plot_by_cluster = TRUE)
+term_gene_graph(result_df = clustered_DMP_path, num_terms=5,
+                use_description = T)
+
+##
+
+# RNA sequencing analysis
+# Only including data from patients with matched RNA sequencing and DNA methylation datasets
+
+# prefetch data using BASH
+$ prefetch SRR5886703	# GSM2724169
+$ prefetch SRR5886704	# GSM2724170
+$ prefetch SRR5886705	# GSM2724171
+$ prefetch SRR5886706	# GSM2724172
+$ prefetch SRR5886734	# GSM2724204
+$ prefetch SRR5886735	# GSM2724205
+$ prefetch SRR5886736	# GSM2724206
+$ prefetch SRR5886737	# GSM2724207
+$ prefetch SRR5886738	# GSM2724208
+$ prefetch SRR5886739	# GSM2724209
+$ prefetch SRR5886740	# GSM2724210
+$ prefetch SRR5886741	# GSM2724211
+
+# Converting SRA data to FASTQ files
+$ fasterq-dump SRR5886703
+$ fasterq-dump SRR5886704
+$ fasterq-dump SRR5886705
+$ fasterq-dump SRR5886706
+$ fasterq-dump SRR5886734
+$ fasterq-dump SRR5886735
+$ fasterq-dump SRR5886736
+$ fasterq-dump SRR5886737
+$ fasterq-dump SRR5886738
+$ fasterq-dump SRR5886739
+$ fasterq-dump SRR5886740
+$ fasterq-dump SRR5886741
+
+# QC
+# RNA sequencing QC was executed using FastQC
+# Creating BAM files using STAR RNA-aligner
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886703.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./0506_C1D1_1 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886704.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./0506_C1D1_2 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886705.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./0506_C2D8_1 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886706.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./0506_C2D8_2 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886734.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./2301_C1D1_1 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886735.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./2301_C1D1_2 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886736.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./2301_C2D8_1 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886737.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./2301_C2D8_2 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886738.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./2302_C1D1_1 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886739.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./2302_C1D1_2 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886740.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./2302_C2D8_1 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+$ ~/star/code/STAR-2.7.6a/bin/Linux_x86_64_static/STAR \
+$ --runThreadN 12 --genomeDir ~/star/genome/ \
+$ --sjdbGTFfile ~/star/Homo_sapiens.GRCh38.79.gtf --sjdbOverhang 100 \
+$ --readFilesIn ~/star/fang_rna/SRR5886741.fastq \
+$ --outSAMtype BAM SortedByCoordinate \
+$ --quantMode TranscriptomeSAM \
+$ --outFileNamePrefix ./2302_C2D8_2 \
+$ --outFilterScoreMinOverLread 0 \
+$ --outFilterMatchNminOverLread 0 \
+$ --outFilterMatchNmin 0
+
+# create BAM index (BAI files) using SAMTOOLS
+# Using Aligned.sortedByCoord.out.bam file from STAR RNA-aligner
+$ samtools index 0506_C1D1_1Aligned.sortedByCoord.out.bam
+$ samtools index 0506_C1D1_2Aligned.sortedByCoord.out.bam
+$ samtools index 0506_C2D8_1Aligned.sortedByCoord.out.bam
+$ samtools index 0506_C2D8_2Aligned.sortedByCoord.out.bam
+$ samtools index 0802_C1D1_1Aligned.sortedByCoord.out.bam
+$ samtools index 0802_C1D1_2Aligned.sortedByCoord.out.bam
+$ samtools index 2301_C1D1_1Aligned.sortedByCoord.out.bam
+$ samtools index 2301_C1D1_2Aligned.sortedByCoord.out.bam
+$ samtools index 2301_C2D8_1Aligned.sortedByCoord.out.bam
+$ samtools index 2301_C2D8_2Aligned.sortedByCoord.out.bam
+$ samtools index 2302_C1D1_1Aligned.sortedByCoord.out.bam
+$ samtools index 2302_C1D1_2Aligned.sortedByCoord.out.bam
+$ samtools index 2302_C2D8_1Aligned.sortedByCoord.out.bam
+$ samtools index 2302_C2D8_2Aligned.sortedByCoord.out.bam
+
+# Count Read
+# load R
+rnaseq_input <- c("/data_directory/0506_C1D1_1Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/0506_C1D1_2Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/0506_C2D8_1Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/0506_C2D8_2Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/2301_C1D1_1Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/2301_C1D1_2Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/2301_C2D8_1Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/2301_C2D8_2Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/2302_C1D1_1Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/2302_C1D1_2Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/2302_C2D8_1Aligned.sortedByCoord.out.bam",
+  "/data_directory_example/2302_C2D8_2Aligned.sortedByCoord.out.bam")
+
+sample_rnaseq <- c("0506_C1D1_1","0506_C1D1_2","0506_C2D8_1","0506_C2D8_2","2301_C1D1_1","2301_C1D1_2","2301_C2D8_1","2301_C2D8_2","2302_C1D1_1","2302_C1D1_2","2302_C2D8_1","2302_C2D8_2")
+
+# download Homo_sapiens.GRCh38.79.gtf
+hg38gtf <- "/data_directory_example/Homo_sapiens.GRCh38.79.gtf"
+
+count_matrix <- featureCounts(files=rnaseq_input,
+annot.ext=hg38gtf,
+isGTFAnnotationFile=TRUE,
+GTF.featureType="exon",
+GTF.attrType="gene_id",
+useMetaFeatures=TRUE,
+allowMultiOverlap=TRUE,
+largestOverlap=TRUE,
+countMultiMappingReads=TRUE,
+isPairedEnd=FALSE,
+nthreads=8)
+
+colnames(count_matrix$counts) <- sample_rnaseq 
+count_rna <- count_matrix$counts
+count_rna <- as.data.frame(count_rna)
+count_rna <- count_rna[,c(1,2,5,6,9,10,3,4,7,8,11,12)]
+
+# DESeq2
+# Differentially gene expression analysis
+treatment_deseq <- factor(rep(c("C1D1","C2D8"), each=6))
+coldata <- data.frame(row.names = c("p0506_pre_1","p0506_pre_2","p2301_pre_1","p2301_pre_2","p2302_pre_1","p2302_pre_2","p0506_post_1","p0506_post_2","p2301_post_1","p2301_post_2","p2302_post_1","p2302_post_2"), treatment_deseq)
+
+dds <- DESeqDataSetFromMatrix(countData = round(count_rna),
+                              colData = coldata,
+                              design = ~treatment_deseq)
+dds <- DESeq(dds)
+DEGs <- results(dds, contrast=c("treatment_deseq","C2D8","C1D1"))
+names(DEGs)[0] <- "Gene"
+
+# RNA sequencing QC
+# Plot Dispersion
+png("qc_dispersions.png", 1000,1000, pointsize = 20)
+plotDispEsts(dds, main = "Dispersion Plot")
+dev.off()
+
+# Regularised log transformation 
+rld <- rlogTransformation(dds)
+head(assay(rld))
+hist(head(assay(rld))
+
+# RNAseq data analysis
+rnaseq <- DEGs
+rownames(rnaseq) <- rnaseq[,1]
+rnaseq <- rnaseq[,-1]
+rnaseq <- rnaseq[!is.na(rownames(rnaseq)),]
+ensembl <- useMart(biomart="ENSEMBL_MART_ENSEMBL",dataset="hsapiens_gene_ensembl")
+geneInfo <- getBM(attributes=c("ensembl_gene_id","hgnc_symbol"), mart=ensembl)
+geneInfo <- geneInfo[!geneInfo$hgnc_symbol == "",]
+geneInfo <- geneInfo[!rownames(geneInfo) == "",]
+geneInfo <- geneInfo[!is.na(geneInfo$hgnc_symbol),]
+geneInfo <- geneInfo[!is.na(rownames(geneInfo)),]
+geneInfo <- geneInfo[!duplicated(geneInfo$ensembl_gene_id),]
+rnaseq   <- rnaseq[which(is.element(rownames(rnaseq),geneInfo$ensembl_gene_id)),]
+geneInfo <- geneInfo[which(is.element(geneInfo$ensembl_gene_id,rownames(rnaseq))),]
+rnaseq   <- rnaseq [order(rownames(rnaseq), decreasing=F),]
+geneInfo <- geneInfo[order(geneInfo$ensembl_gene_id, decreasing=F),]
+rnaseq$Gene <- geneInfo[,2]
+rnaseq <- rnaseq[!is.na(rnaseq$pvalue),]
+rnaseq <- rnaseq[,c(7,2,5,6,1,3,4)]
+
+# rnaseq stat
+rna_stat.sig <- rnaseq
+rna_stat.sig <- rna_stat.sig[rna_stat.sig$pvalue < 0.05,]
+length(unique(rna_stat.sig$Gene)) # Linked to 962 genes
+rna_stat.sig_hi <- rna_stat.sig[rna_stat.sig$log2FoldChange >= 1,]
+rna_stat.sig_lo <- rna_stat.sig[rna_stat.sig$log2FoldChange <= -1,]
+length(unique(rna_stat.sig_hi$Gene)) # 412
+length(unique(rna_stat.sig_lo$Gene)) # 230
+
+# RNAseq, volcanoplot
+png("rnaseq_volcanoplot.png", width = 10, height = 12, units = "in", res=300)
+EnhancedVolcano(rnaseq,
+                lab = rnaseq[,"Gene"],
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                selectLab = c('HLA-A',"HLA-B","HLA-C","B2M","VTCN1",
+                              "CTLA4","CD274","CD28","CD80","CD86","CD276",
+                              "PRAMEF14","CEACAM8","CTCFL","MAGEA11",
+                              "ICOSLG","NCR3LG1","PDCD1LG2","CD1D",
+                              "PRAMEF5","PRAMEF12","PRAMEF20"),
+                xlim = c(-4.5,4.5),
+                ylim = c(-0.5,5),
+                xlab =  bquote(~Log[2]~"Fold-Change"),
+                ylab = bquote(~-Log[10]~"p-value"),
+                title = 'C2D8 versus C1D1',
+                subtitle = "",
+                subtitleLabSize = 0.05,
+                pCutoff = 0.05,
+                FCcutoff = 1.0,
+                cutoffLineType = 'longdash',
+                cutoffLineWidth = 0.5,
+                pointSize = 3.5,
+                labSize = 5.0,
+                labFace = 'bold',
+                colAlpha = 4/5,
+                legendLabels=c('Not sig.',bquote(~Log[2]~"Fold-Change > 1.0 "),'p < 0.05',
+                               bquote(~Log[2]~"Fold-Change + p < 0.05")),
+                legendPosition = 'bottom',
+                legendLabSize = 12,
+                widthConnectors = 0.5,
+                drawConnectors = TRUE,
+                legendIconSize = 5.0)
+dev.off()
+
+# DEGs
+rnaseq_sig <- rnaseq[,c(1:3)]
+rnaseq_sig <- rnaseq_sig[rnaseq_sig$pvalue < 0.05,]
+
+# GSEA DEGs
+rnaseq_gsea <- rnaseq_sig
+rnaseq_gsea <- rnaseq_gsea[rnaseq_gsea$log2FoldChange > 1 |
+                             rnaseq_gsea$log2FoldChange < -1,]
+rnaseq_gsea <- rnaseq_gsea[,c(1:3)]
+rnaseq_gsea <- rnaseq_gsea[order(rnaseq_gsea$log2FoldChange, decreasing=T),]
+colnames(rnaseq_gsea) <- c("Gene.symbol","logFC", "P.Value")
+rownames(rnaseq_gsea) <- NULL
+
+rnaseq_string <- run_pathfindR(rnaseq_sig, pin_name_path = "STRING", gene_sets = "KEGG",adj_method = "fdr", max_to_plot=NULL)
+rnaseq_kegg <- run_pathfindR(rnaseq_gsea, pin_name_path = "KEGG", gene_sets = "KEGG",adj_method = "fdr", max_to_plot=INF)
+
+# RNA-seq per patient (p0506, p2301 and p2302)
+reads.p0506 <- count_rna[,c(1,2,7,8)]
+reads.p2301 <- count_rna[,c(3,4,9,10)]
+reads.p2302 <- count_rna[,c(5,6,11,12)]
+treatment_deseq2 <- factor(rep(c("C1D1","C2D8"), each=2))
+
+coldata_p0506 <- data.frame(row.names = c("p0506_pre_1","p0506_pre_2","p0506_post_1","p0506_post_2"), treatment_deseq2)
+coldata_p2301 <- data.frame(row.names = c("p2301_pre_1","p2301_pre_2","p2301_post_1","p2301_post_2"), treatment_deseq2)
+coldata_p2302 <- data.frame(row.names = c("p2302_pre_1","p2302_pre_2","p2302_post_1","p2302_post_2"), treatment_deseq2)
+
+dds.p0506 <- DESeqDataSetFromMatrix(countData = round(reads.p0506),
+                                    colData = coldata_p0506,
+                                    design = ~treatment_deseq2)
+dds.p0506 <- DESeq(dds.p0506)
+DEGs.p0506 <- results(dds.p0506, contrast=c("treatment_deseq2","C2D8","C1D1"))
+names(DEGs.p0506)[0] <- "Gene"
+
+
+dds.p2301 <- DESeqDataSetFromMatrix(countData = round(reads.p2301),
+                                    colData = coldata_p2301,
+                                    design = ~treatment_deseq2)
+dds.p2301 <- DESeq(dds.p2301)
+DEGs.p2301 <- results(dds.p2301, contrast=c("treatment_deseq2","C2D8","C1D1"))
+names(DEGs.p2301)[0] <- "Gene" 
+
+dds.p2302 <- DESeqDataSetFromMatrix(countData = round(reads.p2302),
+                                    colData = coldata_p2302,
+                                    design = ~treatment_deseq2)
+dds.p2302 <- DESeq(dds.p2302)
+DEGs.p2302 <- results(dds.p2302, contrast=c("treatment_deseq2","C2D8","C1D1"))
+names(DEGs.p2302)[0] <- "Gene" 
+
+# RNA-seq annotation per patient
+ensembl <- useMart(biomart="ENSEMBL_MART_ENSEMBL",dataset="hsapiens_gene_ensembl")
+geneInfo <- getBM(attributes=c("ensembl_gene_id","hgnc_symbol"), mart=ensembl)
+geneInfo <- geneInfo[!geneInfo$hgnc_symbol == "",]
+geneInfo <- geneInfo[!rownames(geneInfo) == "",]
+geneInfo <- geneInfo[!is.na(geneInfo$hgnc_symbol),]
+geneInfo <- geneInfo[!is.na(rownames(geneInfo)),]
+geneInfo <- geneInfo[!duplicated(geneInfo$ensembl_gene_id),]
+
+rnaseq.p0506 <- as.data.frame(DEGs.p0506[which(is.element(rownames(DEGs.p0506),geneInfo$ensembl_gene_id)),])
+rnaseq.p2301 <- as.data.frame(DEGs.p2301[which(is.element(rownames(DEGs.p2301),geneInfo$ensembl_gene_id)),])
+rnaseq.p2302 <- as.data.frame(DEGs.p2302[which(is.element(rownames(DEGs.p2302),geneInfo$ensembl_gene_id)),])
+
+geneInfo.p0506 <- geneInfo[which(is.element(geneInfo$ensembl_gene_id,rownames(rnaseq.p0506))),]
+geneInfo.p2301 <- geneInfo[which(is.element(geneInfo$ensembl_gene_id,rownames(rnaseq.p2301))),]
+geneInfo.p2302 <- geneInfo[which(is.element(geneInfo$ensembl_gene_id,rownames(rnaseq.p2302))),]
+
+rnaseq.p0506 <- rnaseq.p0506[order(rownames(rnaseq.p0506), decreasing=F),]
+rnaseq.p2301 <- rnaseq.p2301[order(rownames(rnaseq.p2301), decreasing=F),]
+rnaseq.p2302 <- rnaseq.p2302[order(rownames(rnaseq.p2302), decreasing=F),]
+
+geneInfo.p0506 <- geneInfo.p0506[order(geneInfo.p0506$ensembl_gene_id, decreasing=F),]
+geneInfo.p2301 <- geneInfo.p2301[order(geneInfo.p2301$ensembl_gene_id, decreasing=F),]
+geneInfo.p2302 <- geneInfo.p2302[order(geneInfo.p2302$ensembl_gene_id, decreasing=F),]
+
+rnaseq.p0506$Gene <- geneInfo.p0506[,2]
+rnaseq.p2301$Gene <- geneInfo.p2301[,2]
+rnaseq.p2302$Gene <- geneInfo.p2302[,2]
+
+rnaseq.p0506 <- rnaseq.p0506[!is.na(rnaseq.p0506$pvalue),]
+rnaseq.p2301 <- rnaseq.p2301[!is.na(rnaseq.p2301$pvalue),]
+rnaseq.p2302 <- rnaseq.p2302[!is.na(rnaseq.p2302$pvalue),]
+
+rnaseq.p0506 <- rnaseq.p0506[,c(7,2,5,6,1,3,4)]
+rnaseq.p2301 <- rnaseq.p2301[,c(7,2,5,6,1,3,4)]
+rnaseq.p2302 <- rnaseq.p2302[,c(7,2,5,6,1,3,4)]
+
+
+# Integrated methylome-transcriptome analysis
+# DEGs for all sample with RNA seq
+data_rna  <- rownames(rnaseq[
+  str_detect(rnaseq$Gene,"SAMPLE_GENE"),])
+data_rna  <- rnaseq[c(data_rna),]
+
+ggplot(data = data_rna, aes(x = Gene,y = log2FoldChange, label = round(log2FoldChange,2),
+                            fill = log2FoldChange > 0 ))+
+  geom_bar(stat = "identity",width=0.5,lwd=0.5)+theme_minimal()+
+  geom_text(size = 7, vjust=0.3,)+
+  labs(x="Gene", y = bquote(~Log[2]~"Fold-change"))+
+  scale_fill_manual(values=c("#FB011C","#009ADE"), guide = F)+
+  # ylim(-0.5, 1)+
+  theme_classic()+
+  theme(axis.text= element_text(size=25),
+        axis.title=element_text(size=25,face="bold"))
+
+# or theme(axis.text= element_text(size=25),
+        axis.title=element_text(size=25,face="bold"),axis.text.x = element_text(angle = 90, vjust = .5, hjust=1)
+
+CpG_site <- mvals.output[str_detect(mvals.output$UCSC_RefGene_Name, "SAMPLE_CPG_SITE"),]
+bvals.cpg_site <- as.data.frame(t(bvals.included[which(is.element(rownames(bvals.included),rownames(CpG_site))),]))
+bvals.cpg_site$Treatment[1:18] <- "C1D1"
+bvals.cpg_site$Treatment[10:18] <- "C2D8"
+bvals.cpg_site$paired <- sub("_.*","",rownames(bvals.cpg_site), perl=TRUE)
+
+# Simplot boxplot
+ggplot(bvals.cpg_site, aes(Treatment,SAMPLE_CPG_SITE)) +
+  geom_boxplot(width=0.3,lwd=0.5) +
+  labs(title="SAMPLE_GENE: SAMPLE_CPG_SITE_LOCATION - SAMPLE_CPG_SITE",x ="", y = "\u03b2-values")+
+  theme_classic()+
+  theme(axis.text= element_text(size=15),
+        axis.title=element_text(size=12),
+        legend.position = "none",
+        plot.title = element_text(size = 12, face = "bold"))+
+  annotate("text", x=0.65, y=0.95, label="\u0394\u03b2 = 0.18", size = 6)+
+  ylim(0, 1)
+
+# pairwise
+# highlighting patients with matched RNAseq data
+ggplot(bvals.cpg_site, aes(Treatment,SAMPLE_CPG_SITE,label = paired)) +
+  geom_boxplot(width=0.3,lwd=0.85) +
+  labs(title="SAMPLE_GENE: SAMPLE_CPG_SITE_LOCATION - SAMPLE_CPG_SITE",x ="", y = "\u03b2-values")+
+  geom_text(data = bvals.cpg_site[c(1:9),], nudge_x = -0.4, size=7)+
+  geom_text(data = bvals.cpg_site[c(10:18),], nudge_x = 0.4, size=7)+
+  geom_text(data = bvals.cpg_site[c(4,8,9),],nudge_x = -0.4, color = "#d72631", size=7)+
+  geom_text(data = bvals.cpg_site[c(13,17,18),],nudge_x = 0.4, color = "#d72631", size=7)+
+  geom_point(aes(fill=Treatment,group=paired),col = "#077b8a", size = 3.5) +
+  geom_point(data = bvals.cpg_site[c(4,8,9,13,17,18),],aes(Treatment,SAMPLE_CPG_SITE,fill=Treatment,group=paired), col = "#d72631",size = 3.5) +
+  geom_line(linetype = 2,aes(group=paired), col = "#077b8a", size = 0.7) +
+  geom_line(data = bvals.cpg_site[c(4,8,9,13,17,18),],aes(Treatment,SAMPLE_CPG_SITE,fill=Treatment,group=paired),
+            col = "#d72631", size = 0.7,arrow = arrow(angle = 20, ends = "both", type = "closed",length = unit(0.35,"cm"))) +
+  theme(legend.position = "none")+
+  theme_classic()+
+  scale_fill_manual(values=c("#077b8a","#077b8a"), guide = F)+
+  ylab("\u03b2-value")+
+  ylim(0,1)+
+  theme(axis.text = element_text(size=25),
+        axis.title = element_text(size=25),
+        plot.title = element_text(size = 20, face = "bold"))
+
+# RNAseq per patients with matched DNA methylome
+data_rna_matched <- data.frame(matrix(ncol = 1, nrow = 3))
+rownames(data_rna_matched) <- c("p0506","p2301","p2302")
+colnames(data_rna_matched) <- c("log2FoldChange")
+
+data_rna_matched[1,1] <- as.data.frame(rnaseq.p0506[str_detect(rnaseq.p0506$Gene,"SAMPLE_GENE"),]$log2FoldChange[[1]])
+data_rna_matched[2,1] <- as.data.frame(rnaseq.p2301[str_detect(rnaseq.p2301$Gene,"SAMPLE_GENE"),]$log2FoldChange[[1]])
+data_rna_matched[3,1] <- as.data.frame(rnaseq.p2302[str_detect(rnaseq.p2302$Gene,"SAMPLE_GENE"),]$log2FoldChange[[1]])
+
+ggplot(data = data_rna_matched, aes(x = rownames(data_rna), y = log2FoldChange, label = round(log2FoldChange,2),
+                            fill = log2FoldChange > 0 ))+
+  geom_bar(stat = "identity", width=0.4,lwd=0.5)+theme_minimal()+
+  geom_text(size = 7, vjust=0.3,)+
+  labs(x="Patient ID", y = bquote(~Log[2]~"Fold-change"))+
+  scale_fill_manual(values=c("#009ADE"), guide = F)+
+  #scale_fill_manual(values=c("#E7032E","#009ADE"), guide = F)+
+  #ylim(-2,0.5)+
+  theme_classic()+
+  theme(axis.text= element_text(size=25),
+        axis.title=element_text(size=25,face="bold"))
