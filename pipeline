@@ -684,6 +684,33 @@ rnaseq$Gene <- geneInfo[,2]
 rnaseq <- rnaseq[!is.na(rnaseq$pvalue),]
 rnaseq <- rnaseq[,c(7,2,5,6,1,3,4)]
 
+# Heatmap using DEGs with log2FC ≥ ±1
+DEGs.sig <- DEGs
+DEGs.sig <- DEGs.sig[which(DEGs.sig$pvalue < 0.05),]
+DEGs.sig <- DEGs.sig[which(DEGs.sig$log2FoldChange >= 1.0 |
+		DEGs.sig$log2FoldChange >= 1.0),]
+
+DEGs.sig_hm <- DEGs.sig[which(is.element(rownames(DEGs.sig),rownames(rld))),]
+rld_hm <- rld[which(is.element(rownames(rld),rownames(DEGs.sig_hm))),]
+
+DEGs.sig_hm_euclid <- as.matrix(dist(t(assay(rld_hm))))
+DEGs.sig_hm_pcormat <- cor(assay(rld_hm),method="pearson",use="complete")
+DEGs.sig_hm_scormat <- cor(assay(rld_hm),method="spearman",use="complete")
+treatment.cols.rna <- rep(c("blue","red"),each = 6)
+
+# spearman correlation showed better separation
+png("deseq_sig_spearman.png", width = 10, height = 15, units = "in", res = 300)
+heatmap(DEGs.sig_hm_scormat,col=greenred(100),ColSideColors=treatment.cols.rna, cex.axis =10, bg="white",margins = c(10,10))
+dev.off()
+
+png("deseq_sig_pearson.png", width = 10, height = 15, units = "in", res = 300)
+heatmap(DEGs.sig_hm_pcormat,col=greenred(100),ColSideColors=treatment.cols.rna, cex.axis =10, bg="white",margins = c(10,10))
+dev.off()
+
+png("deseq_sig_euclid.png", width = 10, height = 15, units = "in", res = 300)
+heatmap(DEGs.sig_hm_euclid,col=greenred(100),ColSideColors=treatment.cols.rna, cex.axis =10, bg="white",margins = c(10,10))
+dev.off()
+
 # rnaseq stat
 rna_stat.sig <- rnaseq
 rna_stat.sig <- rna_stat.sig[rna_stat.sig$pvalue < 0.05,]
@@ -813,6 +840,18 @@ rnaseq.p0506 <- rnaseq.p0506[,c(7,2,5,6,1,3,4)]
 rnaseq.p2301 <- rnaseq.p2301[,c(7,2,5,6,1,3,4)]
 rnaseq.p2302 <- rnaseq.p2302[,c(7,2,5,6,1,3,4)]
 
+# Plot Dispersion per patient
+png("qc_dispersions_p0506.png", 1000,1000, pointsize = 20)
+plotDispEsts(dds.p0506, main = "Dispersion Plot")
+dev.off()
+
+png("qc_dispersions_p2301.png", 1000,1000, pointsize = 20)
+plotDispEsts(dds.p2301, main = "Dispersion Plot")
+dev.off()
+
+png("qc_dispersions_p2302.png", 1000,1000, pointsize = 20)
+plotDispEsts(dds.p2302, main = "Dispersion Plot")
+dev.off()
 
 # Integrated methylome-transcriptome analysis
 # DEGs for all sample with RNA seq
